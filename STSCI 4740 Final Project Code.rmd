@@ -1,0 +1,559 @@
+---
+title: "Wine Quality Prediction Report"
+author: "Nick Gembs, Eric Huang, Tomer Shamir, and David Vilensky"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      out.width = "50%", 
+                      fig.width = 4,
+                      fig.height = 4)
+```
+
+## Introduction  
+
+The goal of this project is to predict the quality of a given wine on a scale from 0-10, with 10 being the highest quality. Our Wine dataset is a collection of 178 red and white wine samples grown in the same region in Italy but derived from three different cultivars. This includes 1,599 red wine observations and 4,898 white wine observations. Each observation measures 12 different chemical properties of a wine: fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sulphates, and alcohol content.  
+
+In this paper we determine which of these predictors are most useful for predicting wine quality, and which type of Machine Learning model performs best.  
+
+## Model Assumptions  
+
+The wine comes in two colors: red and white, each of which comes in a separate data set. We have the option to create two separate models to predict wine quality for each color. However, we choose to create a single, general-purpose model that can predict wine quality, regardless of color by combining the data in the red and white wine data sets and adding an indicator variable which has value 1 when the wine is red and 0 when the wine is white.  
+
+The output is an ordered categorical variable, wine quality ranked with integers 1 through 10. We choose to utilize mostly regression methods instead of classification methods, in order to better utilize the data assumption that quality of 5 is closer to quality of 6 than quality of 2 is. For most classification methods, such as linear discriminant analysis, the method will fail to recognize this assumption of the data.  
+
+We will try out different models in order to determine which is the most effective at predicting wine quality. In order to compare model effectiveness, we must find a common metric to estimate the test error. For this, we choose to use 10-fold cross validation. Furthermore, we used this 10-fold cross-validation in order to choose any tuning parameters we have for our models. We choose 10-fold cross-validation because it is a good estimator of test error that can be used on a variety of models. 10-fold cross validation is preferred over traditional train/test splitting, as the estimated test error from a single train/test split is highly dependent on the particular data trained on, as well as the particular data tested on. In addition, 10-fold cross validation is able to take advantage of the entire data set in training, usually leading to a more robust model. 
+
+We try several methods of predicting wine quality. They are: linear regression (with parameter selection, lasso, and ridge variations), K-Nearest Neighbors, decision trees, and smoothing splines. Each method has their own advantages with respect to interpretability, bias, and variance. Out of these four methods, we then choose the most effective as our model to best predict wine quality.  
+
+## Selection, Lasso, and Ridge Regression  
+
+
+```{r}
+red <- read.csv2("winequality-red.csv")
+white <- read.csv2("winequality-white.csv")
+```
+
+
+
+```{r}
+
+lengthred = length(red$fixed.acidity)
+lengthwhite = length(white$fixed.acidity)
+
+color = rep("Red",lengthred)
+red = cbind(red,color)
+
+color = rep("White",lengthwhite)
+white = cbind(white,color)
+
+df = rbind(white,red)
+names = names(df)
+
+
+for (i in names[1:12]){
+  df[,i] = as.numeric(df[,i])
+}
+
+
+```
+
+
+```{r error=F, message=F, warning=F}
+library(lmtest)
+lm.fit = lm(quality~., data=df)
+summary(lm.fit)
+
+gqtest(lm.fit, order.by = ~., data = df)
+```
+
+
+```{r error=F, message=F, warning=F}
+library(ggplot2)
+
+  
+ggplt <- ggplot(df,aes(x=density,y=quality,shape=color))+
+         geom_point()+ xlim(.98, 1.05) + ggtitle("Quality on Density and Color")
+  
+ggplt
+  
+# Plotting multiple Regression Lines
+ggplt+geom_smooth(method=lm,se=FALSE,fullrange=TRUE,
+                  aes(color=color))
+```
+
+
+```{r error=F, message=F, warning=F}
+library(tidyverse)
+library(caret)
+library(leaps)
+```
+
+#Best Subset Selection
+```{r}
+
+
+bestsubset <- regsubsets(quality~., data = df, nvmax = 12, method = "exhaustive")
+summary(bestsubset)
+
+
+
+```
+```{r}
+res.sum <- summary(bestsubset)
+data.frame(
+  RSS = which.min(res.sum$rss),
+  Adj.R2 = which.max(res.sum$adjr2),
+  CP = which.min(res.sum$cp),
+  BIC = which.min(res.sum$bic)
+)
+
+```
+
+
+
+#Forward Selection
+```{r}
+
+
+bestsubset <- regsubsets(quality~., data = df, nvmax = 12, method = "forward")
+summary(bestsubset)
+```
+```{r}
+res.sum <- summary(bestsubset)
+data.frame(
+  RSS = which.min(res.sum$rss),
+  Adj.R2 = which.max(res.sum$adjr2),
+  CP = which.min(res.sum$cp),
+  BIC = which.min(res.sum$bic)
+)
+
+```
+#Backward Selection
+```{r}
+
+
+bestsubset <- regsubsets(quality~., data = df, nvmax = 12, method = "backward")
+summary(bestsubset)
+```
+```{r}
+res.sum <- summary(bestsubset)
+data.frame(
+  RSS = which.min(res.sum$rss),
+  Adj.R2 = which.max(res.sum$adjr2),
+  CP = which.min(res.sum$cp),
+  BIC = which.min(res.sum$bic)
+)
+
+```
+
+```{r}
+totalfit = lm(quality~., data=df)
+
+minusonefit = lm(quality ~ fixed.acidity + volatile.acidity + residual.sugar + chlorides + free.sulfur.dioxide + density + pH + sulphates + alcohol + color, data = df)
+
+minustwofit = lm(quality ~ fixed.acidity + volatile.acidity + residual.sugar  + free.sulfur.dioxide + density + pH + sulphates + alcohol + color, data = df)
+
+```
+
+```{r}
+
+get_model <- function(varnum, selectionmodel, dependent){
+  
+  models <- summary(selectionmodel)$which[varnum,-1]
+
+  predictors <- names(which(models == TRUE))
+  predictors <- paste(predictors, collapse = "+")
+  
+  as.formula(paste0(dependent, "~", predictors))
+}
+
+```
+
+```{r}
+var1 = get_model(1, bestsubset, "quality")
+var6 = get_model(6, bestsubset, "quality")
+var10 = get_model(10, bestsubset, "quality")
+var11 = get_model(11, bestsubset, "quality")
+var12 = get_model(12, bestsubset, "quality")
+```
+
+```{r}
+colorWhite = rep(0,length(df$color))
+for ( i in 1:length(df$color)){
+  
+  if (df$color[i] == "White"){
+    colorWhite[i] = 1
+  }
+}
+
+dftrain = df
+dftrain$color = colorWhite
+
+colnames(dftrain)[13] = "colorWhite"
+```
+
+
+```{r error=F, message=F, warning=F}
+library(caTools)
+library(car)
+library(quantmod)
+library(MASS)
+library(corrplot)
+```
+
+
+```{r}
+vif(lm.fit)
+
+data_x = dftrain[,c(1,2,3,4,5,6,7,8,9,10,11,13)]
+data_x[is.na(data_x)] <- 0
+cor = cor(data_x)
+
+corinv = ginv(cor)
+colnames(corinv) <- colnames(data_x)                      # rename the row names and column names
+rownames(corinv) <- colnames(data_x)
+corrplot(corinv,method='number',is.corr = F)
+```
+
+```{r error=F, message=F, warning=F}
+library(caret)
+
+
+set.seed(1)
+  train.control <- trainControl(method = "cv", number = 10)
+  cv <- train(var10, data = dftrain, method = "lm",
+              trControl = train.control)
+  (cv$results$RMSE)^2
+  
+
+  train.control <- trainControl(method = "cv", number = 10)
+  cv <- train(var11, data = dftrain, method = "lm",
+              trControl = train.control)
+  (cv$results$RMSE)^2
+  
+  
+  train.control <- trainControl(method = "cv", number = 10)
+  cv <- train(var12, data = dftrain, method = "lm",
+              trControl = train.control)
+ (cv$results$RMSE)^2
+  
+  train.control <- trainControl(method = "cv", number = 10)
+  cv <- train(var1, data = dftrain, method = "lm",
+              trControl = train.control)
+  (cv$results$RMSE)^2
+  
+  
+  train.control <- trainControl(method = "cv", number = 10)
+  cv <- train(var6, data = dftrain, method = "lm",
+              trControl = train.control)
+ (cv$results$RMSE)^2
+  
+
+
+```
+
+#Ridge
+```{r error=F, message=F, warning=F}
+
+#define response variable
+y <- df$quality
+
+#define matrix of predictor variables
+x <- data.matrix(df[, c('alcohol', 'residual.sugar', 'density', 'color', 'pH', 'volatile.acidity', 'chlorides', 'total.sulfur.dioxide', 'fixed.acidity', 'citric.acid','free.sulfur.dioxide','sulphates')])
+
+
+library(glmnet)
+
+#perform k-fold cross-validation to find optimal lambda value
+cv_model <- cv.glmnet(x, y, alpha = 0, K=10)
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.1se
+best_lambda
+
+
+#produce plot of test MSE by lambda value
+plot(cv_model) 
+
+min(cv_model$cvm)
+
+
+```
+
+```{r}
+best_model <- glmnet(x, y, alpha = 0, lambda = best_lambda)
+coef(best_model)
+```
+
+# Lasso
+```{r}
+#define response variable
+y <- df$quality
+
+#define matrix of predictor variables
+x <- data.matrix(df[, c('alcohol', 'residual.sugar', 'density', 'color', 'pH', 'volatile.acidity', 'chlorides', 'total.sulfur.dioxide', 'fixed.acidity', 'citric.acid','free.sulfur.dioxide','sulphates')])
+
+
+library(glmnet)
+
+#perform k-fold cross-validation to find optimal lambda value
+cv_model <- cv.glmnet(x, y, alpha = 1, K=10)
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.1se
+best_lambda
+
+
+#produce plot of test MSE by lambda value
+plot(cv_model) 
+
+min(cv_model$cvm)
+
+```
+
+```{r}
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+```
+
+
+## K-Nearest Neighbors  
+K Nearest Neighbors (KNN) is a supervised machine learning algorithm that can be utilized in both classification and regression problems. KNN is a non-parametric and lazy learning algorithm because it does not assume anything about the underlying distribution. KNN was one of the first methods we looked into because it is fast to train and predict, only relies on distance calculations, and easy to interpret. 
+
+KNN uses a user-defined tuning parameter K to select the K-nearest data points on which to train the model. The optimal value for K can be determined using cross-validation, which involves splitting the data into K subsets, training the model on K-1 subsets, and testing the model on the remaining subset. We used 10-fold cross-validation to compare the performance of K={1,3,6,10,25,50,100}, depicted below.
+
+From this graph we find that a K value of 10 yields the lowest test MSE of 0.6282250. Although KNN is susceptible to the curse of dimensionality, our wines data set only has 13 predictors so KNN works well.
+
+```{r, message=FALSE}
+#loading data
+red <- read.csv2("winequality-red.csv")
+white <- read.csv2("winequality-white.csv")
+
+lengthred = length(red$fixed.acidity)
+lengthwhite = length(white$fixed.acidity)
+
+redYES = rep(1,lengthred)
+red = cbind(red,redYES)
+
+redYES = rep(0,lengthwhite)
+white = cbind(white,redYES)
+
+df = rbind(white,red)
+names = names(df)
+df=lapply(df,as.numeric)
+df=as.data.frame(df)
+
+#KNN
+library(class)
+library(caret)
+library(tidyverse)
+
+#10-fold CV
+model_training = train(quality ~ ., 
+                   data = df,
+                   trControl = trainControl(method = "cv", number = 10),
+                   method = "knn",
+                   tuneGrid = data.frame(k = c(1,3,6,10,25,50,100)))
+
+#calculating MSE
+MSE=model_training$results$RMSE^2
+model_training$results['MSE']=MSE
+
+#model_training$results[,c('k','MSE','MAE')]
+
+#make graph
+MSE=model_training$results$RMSE^2
+plot(c(1,3,6,10,25,50,100),MSE,xlab='k', type = "l", col = "blue")
+```
+
+## Decision Trees  
+For regression trees, we can build trees based on a complexity parameter, which determines how many splits the tree uses in order to make predictions with the data. In order to tune this parameter, we used a grid search over the complexity parameter values of 0.05, 0.01, 0.009, 0.005, and 0.001. Using 10-fold cross validation, we trained the model using each of these tree complexity parameters in order to estimate which complexity produces the model with the lowest test mean squared error. The complexity parameter that produced the lowest test mean squared error value was 0.001, producing the following tree structure, which had an estimated test MSE of 0.545.
+
+```{r packages, error=F, message=F, warning=F}
+rm(list = ls())
+library('rpart')
+library('caret')
+```
+
+```{r trees}
+red = read.csv("winequality-red.csv", sep = ";")
+white = read.csv("winequality-white.csv", sep = ";")
+
+lengthred = length(red$fixed.acidity)
+lengthwhite = length(white$fixed.acidity)
+
+redYES = rep(1,lengthred)
+red = cbind(red,redYES)
+
+redYES = rep(0,lengthwhite)
+white = cbind(white,redYES)
+
+df = rbind(white,red)
+names = names(df)
+
+df <- lapply(df,as.numeric)
+df <- as.data.frame(df)
+
+cpVals = expand.grid(cp=c(0.05, 0.01, 0.009, 0.005, 0.001))
+
+set.seed(1)
+#df$quality = as.factor(df$quality)
+traincontrol <- trainControl(method = "cv", number=10)
+cv <- train(quality~.,data=df,
+            method='rpart', trControl=traincontrol, tuneGrid = cpVals)
+cv$bestTune
+(cv$results$RMSE)^2
+
+tree = rpart(quality ~ fixed.acidity+volatile.acidity+citric.acid+
+               residual.sugar+chlorides+free.sulfur.dioxide+
+               total.sulfur.dioxide+density+pH+sulphates+alcohol+
+               redYES,data=df, method='class',control = rpart.control(cp=cv$bestTune, xval=10))
+par(xpd = TRUE)
+plot(tree, compress=TRUE)
+```
+
+The split conditions and prediction averages are omitted for readability.
+
+This resulting tree is a very complex model, as expected by the very low complexity parameter. We decided to plot the relative error as a function of the number of splits in the model to identify a good point to prune the tree while affecting the estimated test MSE as little as possible. 
+
+``` {r cp_plot}
+plotcp(tree)
+```
+
+There appears to be an “elbow” in this graph at around a complexity parameter of 0.005 indicating that a decrease of value of the complexity parameter starts to have a reduced effect on the error of the model. Therefore, we chose to prune the tree based on the 0.005 complexity parameter and produced a much simpler tree.
+
+```{r prune}
+ptree<- prune(tree,
+              cp= 0.005)
+par(xpd = TRUE)
+plot(ptree, compress=TRUE)
+text(ptree)
+```
+
+This tree, while much simpler than the other tree we generated, only has an estimated test MSE of 0.554, which is not much greater than the first tree we generated. A very important observation we can make based on this model is the importance of alcohol, volatile acidity and chlorides in predicting quality, while the other predictors do not appear to have as great of importance in this prediction. The trees model in this sense acts as a predictor selector to some extent, by splitting over predictors where this split is most effective using the recursive binary splitting algorithm.
+
+
+## Smoothing Splines  
+
+We now implement smoothing splines. When implementing smoothing splines, we have the choice of what to set as the smoothing parameter $\lambda$. This regulates how closely we follow the training data in the loss function 
+$$ \sum^{n}_{i=1} (y_i - g(x_i))^2 + \lambda \int g^{\prime \prime}(t) dt$$.  
+
+That is, the lower $\lambda$ is, the more flexible the model will be, and the higher $\lambda$ is, the less flexible the model will be. We wish to find the optimal middle-ground value of $\lambda$, in which, according to the variance-bias tradeoff, we don't have too flexible of a model with high variance, nor do we have too inflexible of a model with high bias. Setting the correct value of $\lambda$ allows us to find the "valley" in which test error is minimized.  
+
+We implement smoothing splines using the "gam" package. In "gam", instead of setting the exact value of the smoothing parameter, we instead set the effective degrees of freedom. A lower effective degree of freedom corresponds to a higher value of $\lambda$, while a higher effective degree of freedom corresponds to a lower value of $\lambda$.  
+
+```{r packages_spline, error=F, message=F, warning=F}
+rm(list = ls())
+library(tidyverse)
+library(gam)
+library(caret)
+```
+
+```{r spline}
+set.seed(1)
+
+#load data
+wine_red = read_delim("winequality-red.csv", delim = ";",
+                      show_col_types = FALSE)
+wine_white = read_delim("winequality-white.csv", delim = ";",
+                        show_col_types = FALSE)
+
+wines = bind_rows(wine_red %>% mutate(color = "Red"),
+                  wine_white %>% mutate(color = "White")) %>% 
+  rename_with(~str_replace_all(.x, " ", "_"))
+
+#do 10-fold CV
+model_training = train(quality ~ .,
+                   data = wines,
+                   trControl = trainControl(method = "cv", number = 10),
+                   method = "gamSpline",
+                   tuneGrid = data.frame(df = 1:10))
+
+wine_model = model_training$finalModel
+
+model_training$results %>% 
+  mutate(MSE = RMSE^2) %>% 
+  ggplot(aes(df, MSE)) +
+  geom_point(size = 4) + 
+  geom_line() +
+  scale_x_discrete(limits = 1:10 %>% factor())
+
+
+```
+
+```{r inline_code_helper, echo=F}
+best_df = wine_model$nl.df[1] %>% round() + 1
+best_mse = 
+  model_training$results %>% 
+  mutate(MSE = RMSE^2) %>% 
+  filter(df == best_df) %>% 
+  pull(MSE)
+```
+
+We find that the smoothing spline model most effective at predicting wine quality is the model with `r best_df` effective degrees of freedom, with an estimated test MSE of `r best_mse`.  
+
+We demonstrate an example of what the smoothing spline model that we chose looks like. We choose to show the model as only one variable varies, due to limitations in visualizing the model across 12 variables. We hold all variables except for alcohol constant, and we demonstrate how the model prediction varies as alcohol varies. 
+
+```{r fitted_vs_resid_spline}
+library(tidyverse)
+x_vals = seq(from = wines$alcohol %>% min(),
+             to = wines$alcohol %>% max(),
+             length.out = 200)
+mean_wines = 
+  apply(wines[,-((ncol(wines)-2):ncol(wines))] %>% 
+        as.data.frame(), 
+      MARGIN = 2, mean)
+
+spline_demo_tib =
+  tibble(
+    alcohol = x_vals,
+    colorWhite = 1,
+    fixed_acidity = mean_wines["fixed_acidity"],
+    volatile_acidity = mean_wines["volatile_acidity"],
+    citric_acid = mean_wines["citric_acid"],
+    residual_sugar = mean_wines["residual_sugar"],
+    chlorides = mean_wines["chlorides"],
+    free_sulfur_dioxide = mean_wines["free_sulfur_dioxide"],
+    total_sulfur_dioxide = mean_wines["total_sulfur_dioxide"],
+    density = mean_wines["density"],
+    pH = mean_wines["pH"],
+    sulphates = mean_wines["sulphates"]
+  )
+pred_vals = predict(wine_model, spline_demo_tib)
+
+plot(x_vals, pred_vals,
+     xlab = "alcohol",
+     ylab = "predicted quality",
+     main = "Smoothing spline demo")
+
+# spline_resid = 
+#   data.frame(value = (wine_model$residuals)^2, type = "spline") %>% 
+#   as_tibble()
+# 
+# mean_model = lm(quality ~ 1, data = wines)
+# 
+# mean_resid = 
+#   data.frame(value = (mean_model$residuals)^2, type = "mean") %>% 
+#   as_tibble()
+# 
+# resid_tib = bind_rows(spline_resid, mean_resid)
+# 
+# resid_tib %>% 
+#   ggplot(aes(x = value, group = type, color = type)) +
+#   geom_freqpoly()
+# 
+# hist(wine_model$residuals,
+#      main = "",
+#      xlab = "residuals")
+```
+
+
+
+
+
+
+
